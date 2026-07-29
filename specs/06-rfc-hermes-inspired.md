@@ -52,7 +52,75 @@
 - 置信度衰减：每天 2%，90 天未更新自动归档
 - 复用 `insight` 节点类型 + `contradicts` 边关系，不增加新类型
 
-## 0. 事前剖检
+### 7.4 程序记忆（Procedure Memory）— 第二波 ✅
+
+**实施时间**: 2026-07-30 | **状态**: 完成 ✅
+
+在 DecisionTracker 中增加了 `procedure` 可选字段和 `findProcedures(query)` 方法：
+
+- `DecisionInput.procedure` — 存储操作步骤/流程描述
+- `DecisionRecord.procedure` — 从 body JSON 中解析返回
+- `findProcedures(query, limit)` — 按文本召回带 procedure 的决策记录
+- 梦境引擎保护：`dream.ts` 跳过带 procedure 的 decision 节点，防止被自动修剪
+
+**设计决策**: 不做独立的"技能记忆引擎"，而是利用已有的 decision-tracker 结构。
+- 决策天然包含 context → chosen → outcome 的因果链，procedure 是"如何执行"的补充
+- 不需要新的 nodeType、schema 或执行引擎
+- 查询时通过 `searchByText` + 过滤 `nodeType === "decision"` + 检查 `body.procedure`
+- 与现有认知模板（`structure_template` / `ct_`）正交：模板管数据形状，procedure 管操作流程
+
+---
+
+## 8. 技术债务
+
+### TD-001: 记忆后端插件化（MemoryProvider 抽象接口）
+
+| 字段 | 值 |
+|------|-----|
+| **来源** | RFC-006, Hermes 借鉴分析 |
+| **类型** | 架构 / 可扩展性 |
+| **状态** | ⏳ 待处理 |
+| **优先级** | P3 |
+| **预期成本** | 中（重构接口 + 适配现有引擎） |
+
+**描述**：
+Hermes 将记忆系统设计为插件化 `MemoryProvider` 抽象接口（ABC），支持 Honcho / Mem0 / Supermemory 等后端可插拔切换。One Memory 当前只有图-向量混合引擎一个实现，抽接口属于过早抽象。
+
+**为什么现在不做**：
+- 只有一个实现（图-向量混合引擎），没有第二个后端需求
+- 抽象层可能泄漏，反而限制未来设计
+- 当前 MVP 阶段，PMF 验证优先级更高
+
+**触发条件**（任一满足时重新评估）：
+1. 出现需要接入第二个记忆后端的需求（如 MCP 连接的外部记忆服务、纯 SQLite 轻量模式）
+2. 有用户/团队明确要求"我想用 Mem0 替代 One Memory"
+
+**预计方案**：
+```
+MemoryProvider (ABC)
+  ├── HybridGraphVectorEngine (现有实现，适配器模式)
+  ├── MCPProxyEngine (通过 MCP 连接外部记忆服务)
+  └── SimpleSQLiteEngine (轻量模式，纯 FTS5)
+```
+
+### TD-002: 程序记忆独立引擎（Skill Memory）
+
+| 字段 | 值 |
+|------|-----|
+| **来源** | RFC-006, Hermes 借鉴分析 |
+| **类型** | 功能 / 新系统 |
+| **状态** | ⏳ 待处理 |
+| **优先级** | P4 |
+| **预期成本** | 高（新系统全量开发） |
+
+**描述**：
+Hermes 的 skills 系统能从经验中自动创建可执行技能。当前实现只做了轻量的 `procedure` 字段存储 + 文本召回，没有独立的技能执行引擎。
+
+**为什么现在不做**：
+- 涉及从"记忆"到"可执行技能"的范式跨越，本质上是独立产品功能
+- 当前 MVP 阶段，专注 PMF 验证
+
+**触发条件**：PMF 验证通过后，进入 Launch 阶段时重新评估。
 
 **如果这个 RFC 失败了，最可能的原因：**
 

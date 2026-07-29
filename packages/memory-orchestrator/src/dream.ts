@@ -421,6 +421,16 @@ export class DreamEngine {
       // 跳过 insight（它们是整理产出的精华，不自动修剪）
       if (node.nodeType === "insight") continue;
 
+      // 跳过带 procedure 的决策节点（程序记忆，经验步骤，自动保留）
+      if (node.nodeType === "decision") {
+        try {
+          const body = JSON.parse(node.body);
+          if (body.procedure) continue;
+        } catch {
+          // body 解析失败，继续正常判断
+        }
+      }
+
       // 结构模板特殊处理：不自动归档，但已废弃的超过 7 天可删除
       if (this.isTemplateNode(node)) {
         if (node.isDeprecated && node.deprecatedAt) {

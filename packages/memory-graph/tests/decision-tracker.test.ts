@@ -118,6 +118,48 @@ async function runTests() {
   assert(related.length > 0, "Decision has related memories");
   console.log(`  Related memory: ${related[0].node.title} (${related[0].relation})`);
 
+  // ── Test 6: Record decision with procedure ──
+  console.log("\n📋 Test 6: Record decision with procedure");
+
+  const procDecision = tracker.recordDecision({
+    title: "熔断器阈值调整操作步骤",
+    context: "支付模块高峰时段频繁熔断",
+    options: [
+      { name: "方案A", description: "阈值从5改为10", pros: ["简单"], cons: ["治标"] },
+      { name: "方案B", description: "自适应阈值", pros: ["长期"], cons: ["复杂"] },
+    ],
+    chosen: "方案A",
+    rationale: "快速修复",
+    procedure: `1. 打开支付模块 CircuitBreaker 配置
+  2. 将 failureThreshold 从 5 改为 10
+  3. 将 resetTimeout 从 30000 改为 60000
+  4. 部署到生产环境（灰度 10% 观察 10 分钟）
+  5. 观察监控面板，确认熔断触发频率降低
+  6. 全量发布`,
+    tags: ["熔断器", "支付", "操作手册"],
+  });
+
+  assert(procDecision.procedure !== null, "Procedure stored");
+  assert(procDecision.procedure!.includes("failureThreshold"), "Procedure content preserved");
+  console.log(`  Procedure stored (${procDecision.procedure!.length} chars)`);
+
+  // ── Test 7: findProcedures search ──
+  console.log("\n🔍 Test 7: findProcedures search");
+
+  const results = tracker.findProcedures("熔断器");
+  assert(results.length >= 1, "At least 1 procedure found");
+  assert(results[0].procedure !== null, "First result has procedure");
+  assert(results[0].procedure!.includes("failureThreshold"), "Procedure content matches");
+  console.log(`  Found ${results.length} procedure(s)`);
+  console.log(`  First: "${results[0].title}" (${results[0].procedure!.slice(0, 60)}...)`);
+
+  // ── Test 8: findProcedures returns empty for no match ──
+  console.log("\n🔍 Test 8: findProcedures no match");
+
+  const empty = tracker.findProcedures("不存在的查询");
+  assert(empty.length === 0, "Empty result when no match");
+  console.log(`  No results as expected`);
+
   // Cleanup
   db.close();
   for (const p of [CG_DB, CG_DB+"-wal", CG_DB+"-shm"]) { try { fs.unlinkSync(p); } catch {} }

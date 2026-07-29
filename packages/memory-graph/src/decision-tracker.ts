@@ -26,6 +26,8 @@ export interface DecisionInput {
   options: DecisionOption[];
   chosen: string;
   rationale: string;
+  /** 可选：操作步骤/流程描述，用于程序记忆召回 */
+  procedure?: string;
   tags?: string[];
   source?: "agent" | "user" | "system";
   sourceSession?: string | null;
@@ -39,6 +41,7 @@ export interface DecisionRecord {
   options: DecisionOption[];
   chosen: string;
   rationale: string;
+  procedure: string | null;
   outcome: "pending" | "success" | "failure" | "unknown";
   outcomeEvidence: string | null;
   createdAt: number;
@@ -66,6 +69,7 @@ export class DecisionTracker {
         rationale: input.rationale,
         outcome: "pending",
         outcomeEvidence: null,
+        procedure: input.procedure ?? null,
       },
       null,
       2,
@@ -98,6 +102,7 @@ export class DecisionTracker {
       options: input.options,
       chosen: input.chosen,
       rationale: input.rationale,
+      procedure: input.procedure ?? null,
       outcome: "pending",
       outcomeEvidence: null,
       createdAt: node.createdAt,
@@ -137,7 +142,7 @@ export class DecisionTracker {
   linkDecision(
     decisionId: string,
     relatedMemoryId: string,
-    relation: "causes" | "fixes" | "precedes" | "references" | "contradicts" | "supersedes" | "relates_to" | "implements" | "summarizes" | "dream_log" = "implements",
+    relation: EdgeRelation = "implements",
   ): void {
     this.memoryDb.linkMemoryToMemory(decisionId, relatedMemoryId, relation, 1.0);
   }
@@ -159,6 +164,7 @@ export class DecisionTracker {
             options: body.options ?? [],
             chosen: body.chosen ?? "",
             rationale: body.rationale ?? "",
+            procedure: body.procedure ?? null,
             outcome: body.outcome ?? "unknown",
             outcomeEvidence: body.outcomeEvidence ?? null,
             createdAt: n.createdAt,
@@ -170,6 +176,40 @@ export class DecisionTracker {
       })
       .filter((d): d is DecisionRecord => d !== null)
       .filter((d) => !status || d.outcome === status);
+  }
+
+  /**
+   * 查找包含 procedure 的决策记录（程序记忆召回）。
+   * 搜索 procedure 文本，按相关性排序返回。
+   * 用于 agent 在遇到类似问题时自动获取经验步骤。
+   */
+  findProcedures(query: string, limit = 5): DecisionRecord[] {
+    const nodes = this.memoryDb.searchByText(query, limit * 3);
+    return nodes
+      .filter((n) => n.nodeType === "decision")
+      .map((n) => {
+        try {
+          const body = JSON.parse(n.body);
+          if (!body.procedure) return null;
+          return {
+            nodeId: n.id,
+            title: n.title,
+            context: body.context ?? "",
+            options: body.options ?? [],
+            chosen: body.chosen ?? "",
+            rationale: body.rationale ?? "",
+            procedure: body.procedure ?? null,
+            outcome: body.outcome ?? "unknown",
+            outcomeEvidence: body.outcomeEvidence ?? null,
+            createdAt: n.createdAt,
+            importance: n.importance,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((d): d is DecisionRecord => d !== null && d.procedure !== null)
+      .slice(0, limit);
   }
 
   /**
@@ -200,19 +240,18 @@ export class DecisionTracker {
     }
 
     if (success.length > 0) {
-      lines.push("## ✅ 成功的决策");
+      lines.push("## 成功的决策");
       for (const d of success) {
-        lines.push(`- [${d.importance}/10] ${d.title} → ${d.chosen}`);
-        lines.push(`  ${d.outcomeEvidence ?? "无记录"}`);
+        lines.push(`- [${d.importance}/10] ${d.title} → ${d.outcomeEvidence?.slice(0, 100) ?? "无证据"}`);
+        if (d.procedure) lines.push(`  步骤: ${d.procedure.slice(0, 120)}...`);
       }
       lines.push("");
     }
 
     if (failed.length > 0) {
-      lines.push("## ❌ 失败的决策");
+      lines.push("## 失败的决策");
       for (const d of failed) {
-        lines.push(`- ${d.title} → ${d.chosen}`);
-        lines.push(`  ${d.outcomeEvidence ?? "无记录"}`);
+        lines.push(`- [${d.importance}/10] ${d.title} → ${d.outcomeEvidence?.slice(0, 100) ?? "无证据"}`);
       }
       lines.push("");
     }
