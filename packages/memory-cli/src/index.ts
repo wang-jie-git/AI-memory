@@ -66,7 +66,7 @@ async function main() {
   switch (cmd) {
     case "init": {
       console.log("🔌 Initializing MemorySystem...\n");
-      const { MemorySystem } = await import("./memory-system");
+      const { MemorySystem } = await import("../../memory-orchestrator/src/memory-system");
       const sys = await MemorySystem.init({
         codegraphDir: dbPath,
         embedder: "local",

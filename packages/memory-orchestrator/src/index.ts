@@ -344,3 +344,13 @@ export class HybridQueryEngine {
     try { this.vectorStore.close(); } catch { /* ignore */ }
   }
 }
+
+// ===== Session Compressor =====
+
+export {
+  SessionCompressor,
+  type SessionSummary,
+  type CompressedSession,
+  type SessionCompressorConfig,
+  DEFAULT_COMPRESSOR_CONFIG,
+} from "./session-compressor";

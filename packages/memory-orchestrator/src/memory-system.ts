@@ -17,6 +17,7 @@ import { SqliteVectorStore } from "../../memory-vector/src/vector-store";
 import { LocalEmbedder, ApiEmbedder, SimpleEmbedder } from "../../memory-vector/src/embedder";
 import type { Embedder } from "../../memory-vector/src/embedder";
 import { HybridQueryEngine, type HybridQueryConfig } from "./index";
+import { SessionCompressor, type SessionCompressorConfig, type CompressedSession } from "./session-compressor";
 import { MemoryLogger, type LogEntry, type LogLevel } from "./memory-logger";
 import { MemoryWatchdog, type HealthStatus, type WatchdogConfig, type EvaluationReport, type ReportCallback } from "./memory-watchdog";
 import * as path from "node:path";
@@ -51,6 +52,8 @@ export interface MemorySystemConfig {
     minLevel?: LogLevel;
     persistErrors?: boolean;
   };
+  /** 会话压缩配置（默认启用） */
+  sessionCompressor?: Partial<SessionCompressorConfig>;
   /** 健康检查配置 */
   watchdog?: Partial<WatchdogConfig>;
   /** 错误通知回调（error/fatal 级别触发） */
@@ -83,6 +86,8 @@ export class MemorySystem {
   private embedder!: Embedder;
   private obsidianWriter?: ObsidianWriter;
   private queryEngine!: HybridQueryEngine;
+  /** 会话压缩器（跨会话上下文连续） */
+  readonly sessionCompressor?: SessionCompressor;
   private writeBuffer: BufferedEntry[] = [];
   private bufferTimer: ReturnType<typeof setTimeout> | null = null;
   private _initialized = false;
@@ -96,6 +101,7 @@ export class MemorySystem {
     this.config = config;
     this.logger = new MemoryLogger(config.logger);
     this.watchdog = null!; // Will be set after init
+    this.sessionCompressor = undefined; // Will be set after init
   }
 
   // ===== Initialize =====
@@ -177,6 +183,22 @@ export class MemorySystem {
     } catch (err) {
       sys.logger.error("init", "initQueryEngine", "查询引擎初始化失败", err as Error);
       throw err;
+    }
+
+    // 5b. Initialize session compressor (跨会话上下文压缩)
+    try {
+      const scConfig = fullConfig.sessionCompressor ?? {};
+      (sys as any).sessionCompressor = new SessionCompressor(
+        sys.memoryDb,
+        sys.vectorStore,
+        sys.embedder,
+        scConfig,
+      );
+      if (scConfig.enabled !== false) {
+        sys.logger.info("init", "initSessionCompressor", "会话压缩器已初始化");
+      }
+    } catch (err) {
+      sys.logger.warn("init", "initSessionCompressor", "会话压缩器初始化失败（不影响核心功能）", { error: (err as Error).message });
     }
 
     // 6. Initialize watchdog (with logger persistence)
@@ -616,6 +638,60 @@ export class MemorySystem {
       this.logger.error("dream", "consolidate", "梦境整理失败", err as Error);
       throw err;
     }
+  }
+
+  // ===== Session Compressor (跨会话上下文) =====
+
+  /**
+   * 压缩会话，生成摘要记忆节点。
+   * 纯算法实现，无 LLM 调用，零外部依赖。
+   *
+   * @param sessionId 会话 ID
+   * @param messages 会话消息列表
+   * @param options 可选参数（token 数、引用记忆/代码符号 ID、用户 ID）
+   * @returns CompressedSession | null（会话太短则返回 null）
+   */
+  async compressSession(
+    sessionId: string,
+    messages: string[],
+    options?: {
+      sessionStart?: number;
+      tokenCount?: number;
+      referencedMemoryIds?: string[];
+      referencedCodeSymbolIds?: string[];
+      userId?: string;
+    },
+  ): Promise<import("./session-compressor").CompressedSession | null> {
+    if (!this.sessionCompressor) {
+      this.logger.warn("session", "compress", "会话压缩器未初始化，跳过压缩");
+      return null;
+    }
+    return this.sessionCompressor.compress(
+      sessionId,
+      messages,
+      options?.sessionStart ?? Date.now(),
+      options,
+    );
+  }
+
+  /**
+   * 获取最近 N 条会话摘要，用于跨会话上下文注入。
+   *
+   * @param count 返回数量
+   * @param userId 用户 ID 过滤（可选）
+   * @returns 摘要列表
+   */
+  getSessionContext(count?: number, userId?: string): import("./session-compressor").SessionSummary[] {
+    if (!this.sessionCompressor) return [];
+    return this.sessionCompressor.getRecentSummaries(count, userId);
+  }
+
+  /**
+   * 格式化会话摘要为上下文注入文本。
+   */
+  formatSessionContext(summaries: import("./session-compressor").SessionSummary[]): string {
+    if (!this.sessionCompressor) return "";
+    return this.sessionCompressor.formatForContext(summaries);
   }
 
   // ===== Maintenance =====

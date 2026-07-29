@@ -63,7 +63,7 @@ function createDB(dbPath: string): SqliteDB {
 
 // ===== Memory Types =====
 
-export type MemoryNodeType = "memory_entry" | "decision" | "project_milestone" | "insight" | "structure_template";
+export type MemoryNodeType = "memory_entry" | "decision" | "project_milestone" | "insight" | "structure_template" | "session_summary";
 export type MemoryStatus = "active" | "archived" | "pending_review";
 export type MemorySource = "agent" | "user" | "system" | "imported";
 export type MemoryScope = "public" | "global";

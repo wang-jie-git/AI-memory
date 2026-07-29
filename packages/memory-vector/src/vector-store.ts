@@ -22,6 +22,7 @@ export interface VectorMetadata {
   importance: number;
   createdAt: number;
   source: string;
+  tags?: string[];      // 标签（用于搜索过滤）
   tenantId?: string;    // 租户隔离（Phase 4）
   tier?: "hot" | "cold"; // 存储层级
 }

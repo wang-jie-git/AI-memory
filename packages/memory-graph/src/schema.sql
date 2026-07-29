@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
     source_session TEXT,
     tags TEXT NOT NULL DEFAULT '[]',
     node_type TEXT NOT NULL DEFAULT 'memory_entry'
-        CHECK (node_type IN ('memory_entry', 'decision', 'project_milestone', 'insight', 'structure_template')),
+        CHECK (node_type IN ('memory_entry', 'decision', 'project_milestone', 'insight', 'structure_template', 'session_summary')),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     ttl_days INTEGER,
