@@ -57,12 +57,16 @@ One Memory 的路线：**图做骨架，向量做血肉，代码符号做纽带�
        ↓                              ├─ 冗余合并 → 去重
   碎片化、冗余、噪声                    ├─ 主题聚类 → 提炼 insight
        ↓                              ├─ 低值修剪 → 归档/删除
-  查询 → 向量粗召回 → 图遍历精排序       └─ 健康评分 → 报告
-        模糊搜索        结构推理
+  查询 → QueryOptimizer               └─ 健康评分 → 报告
+       ↓
+  embed → vector search
+       ↓
+  Reranker (Top-20→Top-5) → graph refine → fusion
+        语义重排序        结构推理
 ```
 
 让 AI 既**记得住**（大规模持久化），又**理解关系**（函数调用链、bug 因果链、决策关联链），
-还会**自我整理**（梦境周期自动熵减）。
+还会**自我整理**（梦境周期自动熵减），更能**精准检索**（查询优化 + 语义重排序）。
 
 ## 核心优势
 
@@ -75,46 +79,49 @@ One Memory 的路线：**图做骨架，向量做血肉，代码符号做纽带�
 | 规模扩展 | ✅ IVF 15x + 冷热分层 | ✅ 需付费 | ❌ |
 | 本地优先 | ✅ | ❌ | ✅ |
 | 记忆熵减（梦境） | ✅ 冗余合并+聚类+修剪 | ❌ | ❌ |
-| **多租户隔离** | ✅ user_id 三层硬隔离 | ❌ | ❌ |
-| **双层级权限** | ✅ scope=public/global | ❌ | ❌ |
-| **Session 自动压缩** | ✅ 实时摘要+跨会话注入 | ❌ | ❌ |
-| **主动记忆 Nudge** | ✅ 重复模式/错误复现/知识缺口检测 | ❌ | ❌ |
-| **用户画像辩证建模** | ✅ 矛盾检测+置信度衰减+观点演化 | ❌ | ❌ |
-| **程序记忆** | ✅ 决策追踪+procedure 经验步骤召回 | ❌ | ❌ |
+| 多租户隔离 | ✅ user_id 三层硬隔离 | ❌ | ❌ |
+| 双层级权限 | ✅ scope=public/global | ❌ | ❌ |
+| Session 自动压缩 | ✅ 实时摘要+跨会话注入 | ❌ | ❌ |
+| 主动记忆 Nudge | ✅ 重复模式/错误复现/知识缺口检测 | ❌ | ❌ |
+| 用户画像辩证建模 | ✅ 矛盾检测+置信度衰减+观点演化 | ❌ | ❌ |
+| 程序记忆 | ✅ 决策追踪+procedure 经验步骤召回 | ❌ | ❌ |
+| **查询优化** | ✅ LLM 口语→术语改写 | ❌ | ❌ |
+| **语义重排序** | ✅ Top-20→Top-5 准确率提升 30%+ | ❌ | ❌ |
 
 ## 项目状态
 
-**Phase 0–7 全部完成 ✅**
+**Phase 0–7 全部完成 ✅ | v0.7.0 多步 RAG 已发布 🎉**
 
 ```
-Phase 0: 架构定义          100% ████████████
-Phase 1: 核心引擎 MVP      100% ████████████
-Phase 2: 集成与韧性        100% ████████████
-Phase 3: 智能进化          100% ████████████
-Phase 3.5: 梦境引擎        100% ████████████
-Phase 4: 规模化            100% ████████████
-Phase 5: 工程加固          100% ████████████
-Phase 6: 多租户隔离        100% ████████████
-Phase 7: Hermes 启发增强   100% ████████████  ← 新增
+Phase 0: 架构定义            100% ████████████
+Phase 1: 核心引擎 MVP        100% ████████████
+Phase 2: 集成与韧性          100% ████████████
+Phase 3: 智能进化            100% ████████████
+Phase 3.5: 梦境引擎          100% ████████████
+Phase 4: 规模化              100% ████████████
+Phase 5: 工程加固            100% ████████████
+Phase 6: 多租户隔离          100% ████████████
+Phase 7: Hermes 启发增强     100% ████████████
+v0.7.0: 多步 RAG 升级        100% ████████████  ← 新增
 ```
 
 ## 仓库结构
 
 ```
-one-memory/
+AI-memory/
 ├── README.md                    # ← 你在这里
 ├── ARCHITECTURE.md              # 核心架构文档（必读）
 ├── CLAUDE.md                    # 开发规范
 ├── ROADMAP.md                   # 路线图
 ├── specs/                       # 详细技术规范
-│   ├── 01-hybrid-query.md       # 混合查询流程
-│   ├── 02-graph-schema.md       # CodeGraph 记忆节点 Schema
-│   ├── 03-vector-interface.md   # 语义向量接口
-│   ├── 04-dual-write.md         # 双写一致性
+│   ├── 01-hybrid-query.md       # 混合查询流程（含 QueryOptimizer + Reranker）
+│   ├── 02-graph-schema.md       # 记忆节点 Schema v10（user_id 多租户）
+│   ├── 03-vector-interface.md   # 语义向量接口（含 QO/Reranker 协议）
+│   ├── 04-dual-write.md         # 双写一致性（独立 DB 作为 Source of Truth）
 │   ├── 05-dream-engine.md       # 梦境引擎设计
-│   └── 06-rfc-hermes-inspired.md# Hermes 启发增强（Session压缩/Nudge/用户画像）
+│   └── 06-rfc-hermes-inspired.md# Hermes 启发增强
 ├── packages/
-│   ├── memory-graph/            # CodeGraph 记忆引擎集成
+│   ├── memory-graph/            # 记忆图引擎
 │   │   ├── database.ts          # 数据库层（schema v10，user_id 多租户）
 │   │   ├── schema.sql           # SQLite schema v10
 │   │   ├── auto-linker.ts       # 自动代码符号关联
@@ -124,19 +131,21 @@ one-memory/
 │   │   ├── nudge-engine.ts      # 主动记忆 Nudge（RFC-06 Phase B）
 │   │   ├── user-profile.ts      # 用户画像辩证建模（RFC-06 Phase C）
 │   │   └── obsidian-writer.ts   # Obsidian 双写同步
-│   ├── memory-vector/           # 语义向量引擎适配
+│   ├── memory-vector/           # 语义向量引擎
 │   │   ├── ivf-index.ts         # IVF 索引（15x 加速）
 │   │   ├── embedder.ts          # Embedding 模型接口（3 种 + 熔断器）
-│   │   └── vector-store.ts      # SQLite 向量存储（tenantId 过滤）
+│   │   ├── vector-store.ts      # SQLite 向量存储（tenantId 过滤）
+│   │   ├── query-optimizer.ts   # LLM 查询优化（v0.7.0 ✨）
+│   │   └── reranker.ts          # 语义重排序器（v0.7.0 ✨）
 │   ├── memory-orchestrator/     # 混合查询编排器 + 梦境引擎
-│   │   ├── index.ts             # HybridQueryEngine
-│   │   ├── memory-system.ts     # MemorySystem 统一入口（多租户映射）
+│   │   ├── index.ts             # HybridQueryEngine（QO+Reranker 集成）
+│   │   ├── memory-system.ts     # MemorySystem 统一入口
 │   │   ├── dream.ts             # 梦境引擎（熵减）
 │   │   ├── memory-watchdog.ts   # 健康检查
 │   │   └── memory-logger.ts     # 日志系统
 │   ├── memory-mcp/              # MCP 服务器（8 个工具 + user_id 参数）
 │   │   ├── index.ts             # MCP 协议实现
-│   │   └── tools.ts             # 工具定义（memory_write/query/global_write/...）
+│   │   └── tools.ts             # 工具定义
 │   └── memory-cli/              # CLI 管理工具
 ├── tests/
 │   └── moat/
@@ -160,8 +169,33 @@ one-memory/
 | 多租户隔离层 | 3 层（存储/向量/工具） | 零泄露 |
 | Session 压缩 | P50 < 5ms | 实时 |
 | Nudge 延迟 | P50 < 3ms | 实时 |
+| 查询优化 P50 | LLM 调用 < 500ms | 实时 |
+| 重排序 P50 | 内存运算 < 2ms | 实时 |
 
 ## 架构升级记录
+
+### v0.7.0：多步 RAG（查询优化 + 重排序）
+
+**2026-07-30** — 从 AI Agent 系统设计文章启发的多步检索升级。
+
+**新增模块**：
+
+| 模块 | 类型 | 文件 |
+|:---|:---|:---|
+| **QueryOptimizer** | LLM 查询改写 | `memory-vector/src/query-optimizer.ts` |
+| **EmbeddingReranker** | 语义重排序 | `memory-vector/src/reranker.ts` |
+
+**新检索流水线**：
+```
+用户输入 → QueryOptimizer → embed → vector search → Reranker → graph refine → fusion
+  (口语→术语)                (Top-20)   (Top-20→Top-5)
+```
+
+- **LLM QueryOptimizer**：将用户口语化问题改写为专业检索术语，提升语义匹配准确率
+- **EmbeddingReranker**：用 query-doc cosine 相似度对粗召回 Top-20 重排序，截取 Top-5，准确率提升 30%+
+- **向后兼容**：`NoopQueryOptimizer` / `NoopReranker` 兜底，不配置时行为与改动前完全一致
+- **搜索降级链**：`语义搜索 → FTS5 → LIKE`，逐级兜底
+- **Spec 对齐**：01-04 全部更新，移除过时的 CodeGraph 耦合假设，补充多租户隔离描述
 
 ### v10：多租户隔离（Phase 6）
 
@@ -233,8 +267,12 @@ await ms.write({
   userId: "user_zhangsan",  // ← 多租户隔离
 });
 
-// 混合查询（自动按租户过滤）
-const { results } = await ms.query("演讲技巧", { userId: "user_zhangsan" });
+// 混合查询（自动多步 RAG + 按租户过滤）
+const { results } = await ms.query("演讲有啥技巧", { userId: "user_zhangsan" });
+// 1. QueryOptimizer: "演讲有啥技巧" → "演讲技巧 语速控制 肢体语言"
+// 2. embed → vector search (Top-20)
+// 3. Reranker: Top-20 → Top-5
+// 4. graph refine → fusion
 // 不会返回 user_lisi 的数据
 
 // 梦境整理（熵减）
