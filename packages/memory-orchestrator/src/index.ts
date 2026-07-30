@@ -1,12 +1,18 @@
 /**
  * memory-orchestrator: 混合查询编排器
  *
- * 向量粗召回 → 图遍历精排序 → 融合打分 → 返回 TOP K
+ * 查询优化 → 向量粗召回 → 重排序 → 图遍历精排序 → 融合打分 → 返回 TOP K
+ *
+ * 参考: Agentic RAG 的 Multi-Step RAG 模式
+ *   - 查询优化: 用 LLM 重写用户查询，提升语义匹配准确率
+ *   - 重排序: 粗召回 → 精排，准确率提升 30%+
  *
  * 架构:
  *   query("支付超时")
- *     ├── embedder.embed("支付超时") → queryVector
+ *     ├── (可选) queryOptimizer.optimize("支付超时") → "支付模块 超时 故障 排查"
+ *     ├── embedder.embed(optimizedQuery) → queryVector
  *     ├── vectorStore.query(queryVector, topK=20) → candidates
+ *     ├── (可选) reranker.rerank(optimizedQuery, candidates) → reranked
  *     ├── for each candidate:
  *     │     memoryDb.getRelatedMemories(id) → graphRelevance
  *     │     computeRecency(createdAt) → recencyScore
@@ -16,6 +22,8 @@
 import { MemoryDatabase } from "../../memory-graph/src/database";
 import { SqliteVectorStore, type VectorQueryOptions } from "../../memory-vector/src/vector-store";
 import type { Embedder } from "../../memory-vector/src/embedder";
+import { NoopQueryOptimizer, type QueryOptimizer } from "../../memory-vector/src/query-optimizer";
+import { NoopReranker, type Reranker, type RerankerCandidate } from "../../memory-vector/src/reranker";
 
 // ===== Config =====
 
@@ -27,6 +35,10 @@ export interface HybridQueryConfig {
   candidateK: number;    // 粗召回数量 (default 20)
   maxGraphDepth: number; // 图遍历深度 (default 3)
   timeoutMs: number;     // 查询超时 (default 1000)
+  /** 启用查询优化（默认 true） */
+  enableQueryOptimization: boolean;
+  /** 启用重排序（默认 true） */
+  enableReranking: boolean;
 }
 
 export const DEFAULT_CONFIG: HybridQueryConfig = {
@@ -37,6 +49,8 @@ export const DEFAULT_CONFIG: HybridQueryConfig = {
   candidateK: 20,
   maxGraphDepth: 3,
   timeoutMs: 1000,
+  enableQueryOptimization: true,
+  enableReranking: true,
 };
 
 // ===== Result Types =====
@@ -71,6 +85,12 @@ export interface QueryTelemetry {
   returnedCount: number;
   degraded: false | "graph_timeout" | "vector_timeout" | "both_timeout";
   top1Score: number;
+  /** 查询是否被优化器改写 */
+  queryOptimized: boolean;
+  /** 原始查询 */
+  originalQuery: string;
+  /** 优化后的查询（如果被改写） */
+  optimizedQuery?: string;
 }
 
 export interface HybridQueryResponse {
@@ -85,21 +105,28 @@ export class HybridQueryEngine {
   private memoryDb: MemoryDatabase;
   private vectorStore: SqliteVectorStore;
   private embedder: Embedder;
+  private queryOptimizer: QueryOptimizer;
+  private reranker: Reranker;
 
   constructor(
     memoryDb: MemoryDatabase,
     vectorStore: SqliteVectorStore,
     embedder: Embedder,
     config: Partial<HybridQueryConfig> = {},
+    queryOptimizer?: QueryOptimizer,
+    reranker?: Reranker,
   ) {
     this.memoryDb = memoryDb;
     this.vectorStore = vectorStore;
     this.embedder = embedder;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.queryOptimizer = queryOptimizer ?? new NoopQueryOptimizer();
+    this.reranker = reranker ?? new NoopReranker();
   }
 
   /**
-   * Hybrid query: vector semantic recall → graph traversal refine → fusion scoring
+   * Hybrid query: (optional) query optimization → vector semantic recall →
+   * (optional) reranking → graph traversal refine → fusion scoring
    */
   async query(
     queryText: string,
@@ -109,17 +136,35 @@ export class HybridQueryEngine {
     let vectorTimeMs = 0;
     let graphTimeMs = 0;
     let degraded: QueryTelemetry["degraded"] = false;
+    let queryOptimized = false;
+    let optimizedQuery: string | undefined;
+
+    // ── Step 0: Query optimization ──
+    let effectiveQuery = queryText;
+    if (this.config.enableQueryOptimization) {
+      try {
+        const t0 = performance.now();
+        const optimized = await this.queryOptimizer.optimize(queryText);
+        vectorTimeMs += performance.now() - t0;
+        if (optimized && optimized !== queryText) {
+          effectiveQuery = optimized;
+          queryOptimized = true;
+          optimizedQuery = optimized;
+        }
+      } catch {
+        // Optimizer failure is non-fatal — use original query
+      }
+    }
 
     // ── Step 1: Embed the query text ──
     let queryVector: Float32Array;
     try {
       const t0 = performance.now();
-      queryVector = await this.embedder.embed(queryText);
+      queryVector = await this.embedder.embed(effectiveQuery);
       vectorTimeMs += performance.now() - t0;
     } catch (err) {
-      // Embedder failed — degrade to text search only
       degraded = "vector_timeout";
-      return this.fallbackTextSearch(queryText, filter, startTime);
+      return this._buildFallbackResponse(queryText, filter, startTime, queryOptimized, optimizedQuery);
     }
 
     // ── Step 2: Vector coarse recall ──
@@ -150,30 +195,56 @@ export class HybridQueryEngine {
       }));
     } catch {
       degraded = "vector_timeout";
-      return this.fallbackTextSearch(queryText, filter, startTime);
+      return this._buildFallbackResponse(queryText, filter, startTime, queryOptimized, optimizedQuery);
     }
 
     if (candidates.length === 0) {
       degraded = "vector_timeout";
-      return this.fallbackTextSearch(queryText, filter, startTime);
+      return this._buildFallbackResponse(queryText, filter, startTime, queryOptimized, optimizedQuery);
+    }
+
+    // ── Step 2.5: Reranking (optional) ──
+    let rerankedCandidates = candidates;
+    if (this.config.enableReranking && candidates.length > 1) {
+      try {
+        const t0 = performance.now();
+        const rerankerInput: RerankerCandidate[] = candidates.map((c) => ({
+          id: c.id,
+          content: `${c.metadata.title} ${c.metadata.summary}`,
+          originalScore: c.score,
+          metadata: { nodeId: c.metadata.nodeId },
+        }));
+        const reranked = await this.reranker.rerank(effectiveQuery, rerankerInput);
+        vectorTimeMs += performance.now() - t0;
+
+        // Map reranked results back to candidates, preserving metadata
+        const rerankedMap = new Map(reranked.map((r) => [r.id, r]));
+        rerankedCandidates = candidates
+          .filter((c) => rerankedMap.has(c.id))
+          .map((c) => ({
+            ...c,
+            score: rerankedMap.get(c.id)!.score,
+          }));
+      } catch {
+        // Reranker failure is non-fatal — use original ranking
+      }
     }
 
     // ── Step 3: Graph traversal refine ──
     const graphStart = performance.now();
-    const withGraphScores = candidates.map((candidate) => {
+    const withGraphScores = rerankedCandidates.map((candidate) => {
       let graphScore = 0;
 
       try {
-        // Look up the memory node in graph
         const node = this.memoryDb.getNode(candidate.metadata.nodeId);
         if (!node) {
           graphScore = 0;
         } else {
-          // 3a. Code linkage score: how many code symbols this memory links to
+          // 3a. Code linkage score
           const codeLinks = this.memoryDb.getMemoryWithCodeSymbols(node.id);
-          const codeLinkageScore = Math.min(codeLinks.length / 3, 1.0); // 3+ links = full score
+          const codeLinkageScore = Math.min(codeLinks.length / 3, 1.0);
 
-          // 3b. Relation density: how many other memories reference this
+          // 3b. Relation density
           const related = this.memoryDb.getRelatedMemories(node.id, {
             depth: 1,
             minWeight: 0.1,
@@ -182,14 +253,12 @@ export class HybridQueryEngine {
           const outgoingCount = related.filter((r) => r.direction === "outgoing").length;
           const relationDensity = Math.min((incomingCount + outgoingCount) / 10, 1.0);
 
-          // 3c. Importance score (normalized)
+          // 3c. Importance score
           const importanceScore = node.importance / 10;
 
-          // Combined graph score
           graphScore = 0.4 * codeLinkageScore + 0.3 * relationDensity + 0.3 * importanceScore;
         }
       } catch {
-        // Individual node may fail — score as 0, don't fail the whole query
         graphScore = 0;
       }
 
@@ -201,7 +270,7 @@ export class HybridQueryEngine {
     const scored = withGraphScores.map((item) => {
       const vectorScore = Math.max((item.score + 1) / 2, 0); // Normalize [-1,1] → [0,1]
       const graphScore = item.graphScore;
-      const recencyScore = this.computeRecency(item.metadata.createdAt);
+      const recencyScore = this._computeRecency(item.metadata.createdAt);
 
       const finalScore =
         this.config.alpha * vectorScore +
@@ -211,7 +280,6 @@ export class HybridQueryEngine {
       return { item, finalScore, vectorScore, graphScore, recencyScore };
     });
 
-    // Sort by final score descending
     scored.sort((a, b) => b.finalScore - a.finalScore);
     const topResults = scored.slice(0, this.config.topK);
 
@@ -241,7 +309,7 @@ export class HybridQueryEngine {
         relations,
         metadata: {
           type: sr.item.metadata.type,
-          tags: [], // Would need full node for tags
+          tags: [],
           importance: sr.item.metadata.importance,
           createdAt: sr.item.metadata.createdAt,
           source: sr.item.metadata.source,
@@ -261,21 +329,23 @@ export class HybridQueryEngine {
         returnedCount: results.length,
         degraded,
         top1Score: results.length > 0 ? results[0].score : 0,
+        queryOptimized,
+        originalQuery: queryText,
+        ...(optimizedQuery ? { optimizedQuery } : {}),
       },
     };
   }
 
-  /**
-   * Fallback: text search when vector store is unavailable
-   */
-  private fallbackTextSearch(
+  /** Fallback: text search when vector store is unavailable */
+  private _buildFallbackResponse(
     queryText: string,
     filter: VectorQueryOptions["filter"] | undefined,
     startTime: number,
+    queryOptimized: boolean,
+    optimizedQuery?: string,
   ): HybridQueryResponse {
     const nodes = this.memoryDb.searchByText(queryText, this.config.topK);
 
-    // Apply importance filter if specified
     let filtered = nodes;
     if (filter?.importanceMin !== undefined) {
       filtered = filtered.filter((n) => n.importance >= filter.importanceMin!);
@@ -288,10 +358,10 @@ export class HybridQueryEngine {
       nodeId: node.id,
       title: node.title,
       summary: node.summary,
-      score: node.importance / 10, // Fallback scoring by importance
+      score: node.importance / 10,
       vectorScore: 0,
       graphScore: node.importance / 10,
-      recencyScore: this.computeRecency(node.createdAt),
+      recencyScore: this._computeRecency(node.createdAt),
       relations: [],
       metadata: {
         type: node.nodeType,
@@ -314,13 +384,16 @@ export class HybridQueryEngine {
         returnedCount: results.length,
         degraded: "vector_timeout",
         top1Score: results.length > 0 ? results[0].score : 0,
+        queryOptimized,
+        originalQuery: queryText,
+        ...(optimizedQuery ? { optimizedQuery } : {}),
       },
     };
   }
 
   // ===== Scoring Helpers =====
 
-  private computeRecency(timestamp: number): number {
+  private _computeRecency(timestamp: number): number {
     const now = Date.now();
     const ageMs = now - timestamp;
     const ageDays = ageMs / (1000 * 60 * 60 * 24);
@@ -336,6 +409,16 @@ export class HybridQueryEngine {
   /** Update config at runtime */
   setConfig(config: Partial<HybridQueryConfig>): void {
     this.config = { ...this.config, ...config };
+  }
+
+  /** Replace optimizer at runtime */
+  setQueryOptimizer(optimizer: QueryOptimizer): void {
+    this.queryOptimizer = optimizer;
+  }
+
+  /** Replace reranker at runtime */
+  setReranker(reranker: Reranker): void {
+    this.reranker = reranker;
   }
 
   /** Close all underlying connections */

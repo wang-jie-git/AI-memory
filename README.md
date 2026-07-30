@@ -30,7 +30,7 @@ moat check
 **门禁流程**：
 ```
 1/4 TypeScript 类型检查  →  tsc --noEmit（零错误）
-2/4 单元测试             →  vitest run（34 passed）
+2/4 单元测试             →  vitest run（43 passed）
 3/4 Moat 安全扫描        →  moat check（密钥/依赖/导出/异步安全）
 4/4 Git 状态检查         →  git status
 ```
@@ -77,10 +77,14 @@ One Memory 的路线：**图做骨架，向量做血肉，代码符号做纽带�
 | 记忆熵减（梦境） | ✅ 冗余合并+聚类+修剪 | ❌ | ❌ |
 | **多租户隔离** | ✅ user_id 三层硬隔离 | ❌ | ❌ |
 | **双层级权限** | ✅ scope=public/global | ❌ | ❌ |
+| **Session 自动压缩** | ✅ 实时摘要+跨会话注入 | ❌ | ❌ |
+| **主动记忆 Nudge** | ✅ 重复模式/错误复现/知识缺口检测 | ❌ | ❌ |
+| **用户画像辩证建模** | ✅ 矛盾检测+置信度衰减+观点演化 | ❌ | ❌ |
+| **程序记忆** | ✅ 决策追踪+procedure 经验步骤召回 | ❌ | ❌ |
 
 ## 项目状态
 
-**Phase 0–6 全部完成 ✅**
+**Phase 0–7 全部完成 ✅**
 
 ```
 Phase 0: 架构定义          100% ████████████
@@ -90,7 +94,8 @@ Phase 3: 智能进化          100% ████████████
 Phase 3.5: 梦境引擎        100% ████████████
 Phase 4: 规模化            100% ████████████
 Phase 5: 工程加固          100% ████████████
-Phase 6: 多租户隔离        100% ████████████  ← 新增
+Phase 6: 多租户隔离        100% ████████████
+Phase 7: Hermes 启发增强   100% ████████████  ← 新增
 ```
 
 ## 仓库结构
@@ -106,14 +111,18 @@ one-memory/
 │   ├── 02-graph-schema.md       # CodeGraph 记忆节点 Schema
 │   ├── 03-vector-interface.md   # 语义向量接口
 │   ├── 04-dual-write.md         # 双写一致性
-│   └── 05-dream-engine.md       # 梦境引擎设计
+│   ├── 05-dream-engine.md       # 梦境引擎设计
+│   └── 06-rfc-hermes-inspired.md# Hermes 启发增强（Session压缩/Nudge/用户画像）
 ├── packages/
 │   ├── memory-graph/            # CodeGraph 记忆引擎集成
 │   │   ├── database.ts          # 数据库层（schema v10，user_id 多租户）
 │   │   ├── schema.sql           # SQLite schema v10
 │   │   ├── auto-linker.ts       # 自动代码符号关联
 │   │   ├── importance-learner.ts# 重要性学习与衰减
-│   │   ├── decision-tracker.ts  # 决策追踪与回溯
+│   │   ├── decision-tracker.ts  # 决策追踪与回溯（含 procedure 程序记忆）
+│   │   ├── session-compressor.ts# Session 压缩（RFC-06 Phase A）
+│   │   ├── nudge-engine.ts      # 主动记忆 Nudge（RFC-06 Phase B）
+│   │   ├── user-profile.ts      # 用户画像辩证建模（RFC-06 Phase C）
 │   │   └── obsidian-writer.ts   # Obsidian 双写同步
 │   ├── memory-vector/           # 语义向量引擎适配
 │   │   ├── ivf-index.ts         # IVF 索引（15x 加速）
@@ -146,9 +155,11 @@ one-memory/
 | 向量搜索（IVF） | 0.396ms（15x 加速） | > 10x |
 | 图遍历 P50 | 0.3ms | < 5ms |
 | 梦境健康评分 | 0–10 分 | > 7 |
-| 测试覆盖 | 8 套（34 passed） | 全通过 |
+| 测试覆盖 | 10 套（43 passed） | 全通过 |
 | 数据一致性 | SQLite 统一持久化 | 无外部 JSON 文件 |
 | 多租户隔离层 | 3 层（存储/向量/工具） | 零泄露 |
+| Session 压缩 | P50 < 5ms | 实时 |
+| Nudge 延迟 | P50 < 3ms | 实时 |
 
 ## 架构升级记录
 
@@ -176,6 +187,33 @@ one-memory/
 | v7 | FTS5 全文搜索（中文分词） |
 | v8 | 索引优化 |
 | v9 | structure_template 类型支持 |
+
+### Phase 7：Hermes 启发增强（RFC-006）
+
+**来源**：NousResearch Hermes Agent 记忆系统分析
+
+**三个新增能力**：
+
+| 能力 | 模块 | 文件 |
+|:---|:---|:---|
+| **Session 自动压缩** | `SessionCompressor` | `memory-graph/src/session-compressor.ts` |
+| **主动记忆 Nudge** | `NudgeEngine` | `memory-graph/src/nudge-engine.ts` |
+| **用户画像辩证建模** | `UserProfileEngine` | `memory-graph/src/user-profile.ts` |
+
+**Session 压缩** — 会话结束时自动生成摘要节点，新会话时自动注入上下文，减少上下文窗口压力。复用 `session_summary` 节点类型 + `summarizes` 边关系。
+
+**Nudge 引擎** — 新记忆写入时自动检测 3 种场景主动提示：
+- 复杂任务 → 建议记录为经验
+- 重复模式 → 建议创建通用规则
+- 错误复现 → 建议回顾历史决策
+
+**用户画像引擎** — 跨会话追踪用户观点，检测矛盾、衰减置信度、追踪观点演化。支持 `getProfileSummary()` 直接注入系统 prompt。
+
+**程序记忆** — 在 `DecisionTracker` 中增加 `procedure` 字段和 `findProcedures()` 方法，让记忆系统能存储和召回"怎么做"的操作步骤。梦境引擎保护带 procedure 的决策节点不被自动修剪。
+
+**技术债务**：
+- TD-001: 记忆后端插件化（P3，等出现第二个需求）
+- TD-002: 程序记忆独立引擎（P4，PMF 后评估）
 
 ## 快速开始
 
@@ -219,6 +257,15 @@ await ms.shutdown();
 | `global_stats` | 全局记忆统计 | ❌ |
 | `global_dream` | 全局梦境整理 | ❌ |
 | `obsidian_sync` | Obsidian 同步 | ❌ |
+
+### 新增能力（MCP 工具已扩展）
+
+| 场景 | 工具链 |
+|:---|:---|
+| Session 压缩 | `compressSession()` → `injectContext()` |
+| 主动 Nudge | `nudgeCheck()` → 自动建议写入 |
+| 用户画像 | `observe()` → `getProfile()` / `getProfileSummary()` |
+| 程序记忆 | `findProcedures(query)` → 返回经验步骤 |
 
 ## 梦境引擎（熵减）
 

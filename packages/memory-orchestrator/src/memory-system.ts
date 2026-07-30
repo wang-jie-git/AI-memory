@@ -14,8 +14,10 @@
 import { MemoryDatabase, type MemoryNode, type MemoryNodeType, type MemoryStatus, type MemorySource, type MemoryScope } from "../../memory-graph/src/database";
 import { ObsidianWriter } from "../../memory-graph/src/obsidian-writer";
 import { SqliteVectorStore } from "../../memory-vector/src/vector-store";
-import { LocalEmbedder, ApiEmbedder, SimpleEmbedder } from "../../memory-vector/src/embedder";
+import { LocalEmbedder, ApiEmbedder, SimpleEmbedder, NoopQueryOptimizer, NoopReranker, LLMQueryOptimizer, EmbeddingReranker } from "../../memory-vector/src";
 import type { Embedder } from "../../memory-vector/src/embedder";
+import type { QueryOptimizer } from "../../memory-vector/src/query-optimizer";
+import type { Reranker } from "../../memory-vector/src/reranker";
 import { HybridQueryEngine, type HybridQueryConfig } from "./index";
 import { SessionCompressor, type SessionCompressorConfig, type CompressedSession } from "./session-compressor";
 import { MemoryLogger, type LogEntry, type LogLevel } from "./memory-logger";
@@ -42,6 +44,26 @@ export interface MemorySystemConfig {
   embedderModel?: string;
   /** 混合查询配置 */
   hybridQuery?: Partial<HybridQueryConfig>;
+  /** 查询优化器配置（可选，不配置则不启用优化） */
+  queryOptimizer?: {
+    /** 优化器类型: 'llm' | 'none' */
+    type: "llm" | "none";
+    /** LLM API base URL（OpenAI-compatible） */
+    baseUrl?: string;
+    /** API key */
+    apiKey?: string;
+    /** 模型名，默认 gpt-4o-mini */
+    model?: string;
+  };
+  /** 重排序器配置（可选，不配置则不启用重排序） */
+  reranker?: {
+    /** 重排序器类型: 'embedding' | 'none' */
+    type: "embedding" | "none";
+    /** 粗召回数量，默认 20 */
+    candidateK?: number;
+    /** 最终返回数量，默认 5 */
+    topK?: number;
+  };
   /** 写入缓冲大小（条数，默认 10） */
   writeBufferSize?: number;
   /** 写入缓冲间隔（ms，默认 2000） */
@@ -174,11 +196,38 @@ export class MemorySystem {
 
     // 5. Initialize query engine
     try {
+      // Build query optimizer
+      let queryOptimizer: QueryOptimizer = new NoopQueryOptimizer();
+      if (fullConfig.queryOptimizer?.type === "llm" && fullConfig.queryOptimizer.apiKey) {
+        queryOptimizer = new LLMQueryOptimizer({
+          baseUrl: fullConfig.queryOptimizer.baseUrl,
+          apiKey: fullConfig.queryOptimizer.apiKey,
+          model: fullConfig.queryOptimizer.model,
+        });
+        sys.logger.info("init", "initQueryOptimizer", "LLM 查询优化器已启用", {
+          model: fullConfig.queryOptimizer.model ?? "gpt-4o-mini",
+        });
+      }
+
+      // Build reranker
+      let reranker: Reranker = new NoopReranker();
+      if (fullConfig.reranker?.type === "embedding") {
+        reranker = new EmbeddingReranker(sys.embedder, {
+          candidateK: fullConfig.reranker.candidateK,
+          topK: fullConfig.reranker.topK,
+        });
+        sys.logger.info("init", "initReranker", "Embedding 重排序器已启用", {
+          model: sys.embedder.modelName,
+        });
+      }
+
       sys.queryEngine = new HybridQueryEngine(
         sys.memoryDb,
         sys.vectorStore,
         sys.embedder,
         fullConfig.hybridQuery,
+        queryOptimizer,
+        reranker,
       );
     } catch (err) {
       sys.logger.error("init", "initQueryEngine", "查询引擎初始化失败", err as Error);
