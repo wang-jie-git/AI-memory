@@ -15,32 +15,28 @@ interface VectorStore {
   init(): Promise<void>;
   close(): Promise<void>;
 
-  embed(text: string): Promise<Float32Array>;
-  upsert(id: string, vector: Float32Array, metadata: VectorMetadata): Promise<void>;
+upsert(id: string, vector: Float32Array, metadata: VectorMetadata): Promise<void>;
   upsertBatch(entries: VectorEntry[]): Promise<void>;
   delete(id: string): Promise<void>;
   query(vector: Float32Array, options: VectorQueryOptions): Promise<VectorResult[]>;
 
   stats(): Promise<VectorStoreStats>;
-  rebuildIndex(): Promise<void>;
-  flush(): Promise<void>;
+  delete(id: string): boolean;
 }
 
 // === 类型定义 ===
 
 type VectorMetadata = {
-  node_id: string;               // memory_nodes.id（UUID）
+  nodeId: string;               // memory_nodes.id（UUID）
   type: string;                  // memory_entry / decision / project_milestone / ...
   title: string;
   summary: string;
   tags: string[];
   importance: number;
-  created_at: number;
+  createdAt: number;
   source: string;
-  tenantId?: string;             // 多租户隔离（对应 user_id）
-  userId?: string;               // 冗余字段，方便过滤
-  scope?: string;                // public / global / personal
-  tier_min?: number;             // 最低权限等级
+  tenantId?: string;    // 租户隔离
+  tier?: "hot" | "cold"; // 存储层级
 };
 
 type VectorEntry = {
@@ -52,14 +48,12 @@ type VectorEntry = {
 type VectorQueryOptions = {
   topK: number;
   filter?: {
-    type?: string[];
+    types?: string[];
     importanceMin?: number;
-    source?: string[];
-    tags?: string[];
+    sources?: string[];
     timeRange?: [number, number];
-    tenantId?: string;           // 多租户过滤
-    scope?: string;
-    tierMax?: number;
+    tenantId?: string;
+    tiers?: ("hot" | "cold")[];
   };
   scoreThreshold?: number;
 };
@@ -74,7 +68,6 @@ type VectorStoreStats = {
   totalEntries: number;
   dimension: number;
   memoryUsageBytes: number;
-  indexType: string;
 };
 ```
 

@@ -51,19 +51,20 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
     content_hash TEXT NOT NULL,
     importance INTEGER NOT NULL DEFAULT 5,
     status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'archived', 'pending_review', 'deprecated')),
+        CHECK (status IN ('active', 'archived', 'pending_review')),
     source TEXT NOT NULL DEFAULT 'agent'
-        CHECK (source IN ('agent', 'user', 'system', 'imported', 'obsidian')),
+        CHECK (source IN ('agent', 'user', 'system', 'imported')),
     source_session TEXT,
     tags TEXT NOT NULL DEFAULT '[]',
     node_type TEXT NOT NULL DEFAULT 'memory_entry'
         CHECK (node_type IN (
             'memory_entry', 'decision', 'project_milestone',
-            'insight', 'structure_template', 'session_summary', 'procedure'
+            'insight', 'structure_template', 'session_summary'
         )),
     scope TEXT NOT NULL DEFAULT 'public'
-        CHECK (scope IN ('public', 'global', 'personal')),
-    tier_min INTEGER NOT NULL DEFAULT 0,
+        CHECK (scope IN ('public', 'global')),
+    tier_min INTEGER NOT NULL DEFAULT 1
+        CHECK (tier_min >= 1 AND tier_min <= 10),
     user_id TEXT NOT NULL DEFAULT 'default',
     negative_examples TEXT,
     is_deprecated INTEGER NOT NULL DEFAULT 0,
@@ -78,7 +79,7 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
 -- =============================================================================
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_nodes_fts USING fts5(
-    title, summary, body, tags,
+    title, summary, body,
     content='memory_nodes',
     content_rowid='rowid',
     tokenize='unicode61'
@@ -90,15 +91,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_nodes_fts USING fts5(
 
 CREATE TABLE IF NOT EXISTS memory_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_type TEXT NOT NULL CHECK (source_type IN ('memory')),
+    source_type TEXT NOT NULL CHECK (source_type IN ('memory', 'code')),
     source_id TEXT NOT NULL,
-    target_type TEXT NOT NULL CHECK (target_type IN ('memory')),
+    target_type TEXT NOT NULL CHECK (target_type IN ('memory', 'code')),
     target_id TEXT NOT NULL,
     relation TEXT NOT NULL
         CHECK (relation IN (
-            'causes','fixes','precedes','follows','references',
-            'contradicts','supersedes','summarizes','relates_to',
-            'implements','questions','dream_action'
+            'links_to_code', 'causes', 'fixes', 'precedes',
+            'follows', 'references', 'contradicts', 'supersedes',
+            'relates_to', 'implements', 'questions', 'summarizes',
+            'dream_log'
         )),
     weight REAL NOT NULL DEFAULT 1.0,
     description TEXT NOT NULL DEFAULT '',
@@ -137,7 +139,16 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_relation ON memory_edges(relation);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_vectors_node_unique ON memory_vectors(node_id);
 ```
 
-## 3. 多租户隔离（v10 新增）
+
+## 3. 梦境运行记录
+
+
+
+## 4. 记忆热度追踪
+
+
+
+## 5. 多租户隔离（v10 新增）
 
 三层硬隔离：
 
@@ -150,7 +161,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_vectors_node_unique ON memory_vecto
 - `user_id = 'default'` 时所有用户共享（向后兼容）
 - 用户身份由 MCP 调用方硬性绑定，LLM 不参与
 
-## 4. 查询示例
+## 6. 查询示例
 
 ```sql
 -- 查询某个用户的活跃记忆
@@ -169,7 +180,7 @@ WHERE d.node_type = 'decision'
   AND me.relation IN ('causes', 'fixes', 'implements');
 ```
 
-## 5. Schema 版本历史
+## 7. Schema 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -177,7 +188,7 @@ WHERE d.node_type = 'decision'
 | v3→v9 | 2026-07-24 | 独立 DB、FTS5、scope/tier_min、structure_template、is_deprecated |
 | v10 | 2026-07-24 | 多租户隔离（user_id 列 + 索引） |
 
-## 6. vs CodeGraph `nodes` 表
+## 8. vs CodeGraph `nodes` 表
 
 | 维度 | `nodes` (CodeGraph) | `memory_nodes` (Memory) |
 |------|--------------------|------------------------|
